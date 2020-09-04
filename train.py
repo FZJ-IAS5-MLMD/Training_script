@@ -3,8 +3,8 @@
 # to stop this warning, downgrade gast
 # pip install gast==0.2.2
 
-import sys; sys.path.insert(0, '/home/h2/hpclabxx/bin/mimicpy')
-import sys; sys.path.insert(0, '/home/h2/hpclabxx/bin/pinn')
+import sys; sys.path.insert(0, '/home/h2/hpclab12/bin/mimicpy')
+import sys; sys.path.insert(0, '/home/h2/hpclab12/bin/pinn')
 import os, warnings
 warnings.filterwarnings('ignore') # stop future warnings
 

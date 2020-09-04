@@ -1,3 +1,9 @@
+# Custom
+model/
+train.out
+train.err
+*.trr
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
