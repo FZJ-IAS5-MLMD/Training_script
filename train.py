@@ -1,10 +1,10 @@
 ########Settings to shutup tensorflow###########################################################################
 # WARNING:tensorflow:Entity <..>> could not be transformed and will be executed as-is
 # to stop this warning, downgrade gast
-# pip3 install gast==0.2.2
+# pip install gast==0.2.2
 
-import sys; sys.path.insert(0, '/home/raghavan/bin/mimicpy')
-import sys; sys.path.insert(0, '/home/raghavan/bin/pinn')
+import sys; sys.path.insert(0, '/home/h2/hpclabxx/bin/mimicpy')
+import sys; sys.path.insert(0, '/home/h2/hpclabxx/bin/pinn')
 import os, warnings
 warnings.filterwarnings('ignore') # stop future warnings
 
@@ -37,10 +37,8 @@ from pinn.io.mimic import load_mimic
 from pinn.models import potential_model
 from pinn.networks import pinet
 
-import MDAnalysis as mda
-u = mda.Universe(trr)
-num_samples = len(u.trajectory)
-u.trajectory.close()
+from pinn.io.trr import get_trr_frames
+num_samples = get_trr_frames(trr)
 
 import math
 import time
@@ -48,7 +46,7 @@ import time
 chkpts = []
 
 class SessHook(tf.train.SessionRunHook):
-
+    
     def __init__(self, mode, rate=1):
         mode_len = math.ceil( num_samples*split[mode]/sum(split.values()) )
         self._n_batchs = math.ceil( mode_len/batch_size[mode] )
@@ -110,7 +108,7 @@ class SessHook(tf.train.SessionRunHook):
         global_step = sess.run(self._global_step_t)
         print('\n           *** Finished ***'.format(global_step))
     
-    class TrainHook(SessHook):
+class TrainHook(SessHook):
     def __init__(self):
         super().__init__('train')
         print("Initiating training with following parameters:")
