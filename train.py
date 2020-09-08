@@ -13,6 +13,8 @@ warnings.filterwarnings('ignore') # stop future warnings
 
 # import tensorflow as tf
 import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
+
 # even after all this, deprication warning will appear
 # to prevent this, set loggin level to ERROR below
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.DEBUG)
