@@ -3,20 +3,25 @@
 # to stop this warning, downgrade gast
 # pip install gast==0.2.2
 
-import sys; sys.path.insert(0, '/home/h2/hpclab12/bin/mimicpy')
-import sys; sys.path.insert(0, '/home/h2/hpclab12/bin/pinn')
+# import sys; sys.path.insert(0, '/home/h2/hpclab12/bin/mimicpy')
+# import sys; sys.path.insert(0, '/Users/andrea/Development/mimicpy')
+# import sys; sys.path.insert(0, '/home/h2/hpclab12/bin/pinn')
+import sys; sys.path.insert(0, '/scratch/ws/1/hpclab11-gpuH_1/mimicpy')
+import sys; sys.path.insert(0, '/scratch/ws/1/hpclab11-gpuH_1/PiNN')
 import os, warnings
 warnings.filterwarnings('ignore') # stop future warnings
 
-import tensorflow as tf
+# import tensorflow as tf
+import tensorflow.compat.v1 as tf
 # even after all this, deprication warning will appear
 # to prevent this, set loggin level to ERROR below
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.DEBUG)
 # however, this will stop all input to tensorboard
 
 #For optimization
-os.environ['CUDA_VISIBLE_DEVICES'] = '0' # required for tf to use gpu
-os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=1 /home/raghavan/pinn_test_mimic' # accelerate tf models, stops warning
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0' # required for tf to use gpu
+# os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=1 /home/raghavan/pinn_test_mimic' # accelerate tf models, stops warning
+
 ###############################################################################################################
 
 ########Global settings for training###########################################################################
@@ -31,7 +36,6 @@ model_dir = 'model'
 
 ########Helper Funcstions/Classes##############################################################################
 from pinn.io import sparse_batch
-from pinn.models import potential_model
 from pinn.calculator import PiNN_calc
 from pinn.io.mimic import load_mimic
 from pinn.models import potential_model
@@ -44,6 +48,7 @@ import math
 import time
 
 chkpts = []
+
 
 class SessHook(tf.train.SessionRunHook):
     
@@ -107,7 +112,8 @@ class SessHook(tf.train.SessionRunHook):
         self._line()
         global_step = sess.run(self._global_step_t)
         print('\n           *** Finished ***'.format(global_step))
-    
+
+
 class TrainHook(SessHook):
     def __init__(self):
         super().__init__('train')
@@ -133,6 +139,7 @@ class TrainHook(SessHook):
     def _line(self):
         print("---------------------------------------------")
 
+
 class CheckPtLogger(tf.estimator.CheckpointSaverListener):
     def begin(self):
         chkpts = []
@@ -147,6 +154,7 @@ class CheckPtLogger(tf.estimator.CheckpointSaverListener):
         else:
             print('     Wrote checkpoints at steps '+( ', '.join(chkpts) ) )
 
+
 def evalResult(ev):
     print("\nEvaluation result:")
     print("---------------------------------------")
@@ -156,34 +164,42 @@ def evalResult(ev):
         print("---------------------------------------")
     print('\n')
 
+
 ###############################################################################################################
 
 ########Training and Evaluation################################################################################
 
-print("Loaded tensorflow..\nStarting..")
+if __name__ == '__main__':
 
-pre_fn = lambda tensors: pinet(tensors, preprocess=True)
-dataset = lambda: load_mimic(mpt, trr, ener, split=split)
-train = lambda: dataset()['train'].cache().repeat().shuffle(1000).\
-        apply(sparse_batch(batch_size['train'])).map(pre_fn, 8)
-valid = lambda: dataset()['vali'].cache().repeat().apply(sparse_batch(batch_size['vali'])).map(pre_fn, 8)
-valid = lambda: dataset()['test'].cache().repeat().apply(sparse_batch(batch_size['test'])).map(pre_fn, 8)
+    print("Loaded tensorflow..\nStarting..")
 
-params = {'model_dir': model_dir,
-          'network': 'pinet',
-          'network_params': {},
-          'model_params': {'learning_rate': 1e-4, 'decay_step':10, 'decay_rate': 0.70}}
-config = tf.contrib.learn.RunConfig(log_step_count_steps=10,\
-                            save_summary_steps=10, keep_checkpoint_max=None, save_checkpoints_steps=20)
-model = potential_model(params, config=config)
+    pre_fn = lambda tensors: pinet(tensors, preprocess=True)
+    dataset = lambda: load_mimic(mpt, trr, ener, split=split)
+    train = lambda: dataset()['train'].cache().repeat().shuffle(1000).\
+            apply(sparse_batch(batch_size['train'])).map(pre_fn, 8)
+    valid = lambda: dataset()['vali'].cache().repeat().apply(sparse_batch(batch_size['vali'])).map(pre_fn, 8)
+    valid = lambda: dataset()['test'].cache().repeat().apply(sparse_batch(batch_size['test'])).map(pre_fn, 8)
 
-model.train(input_fn=train, hooks=[TrainHook()], saving_listeners=[CheckPtLogger()])
+    params = {'model_dir': model_dir,
+              'network': 'pinet',
+              'network_params': {},
+              'model_params': {'learning_rate': 1e-4, 'decay_step':10, 'decay_rate': 0.70}}
 
-print('Validation Error:\n')
-for i in chkpts:
+    session_config = tf.ConfigProto()
+    session_config.gpu_options.allow_growth = True
+    config = tf.estimator.RunConfig(log_step_count_steps=10, save_summary_steps=10,
+                                    keep_checkpoint_max=None, save_checkpoints_steps=20,
+                                    session_config=session_config)
+
+    model = potential_model(params, config=config)
+
+    model.train(input_fn=train, hooks=[TrainHook()], saving_listeners=[CheckPtLogger()])
+
+    print('Validation Error:\n')
+    for i in chkpts:
         evalResult(model.evaluate(input_fn=valid, hooks=[SessHook('vali')],\
-                          checkpoint_path=model_dir+'/model.ckpt-'+str(i), name='Validation'))
+                                  checkpoint_path=model_dir+'/model.ckpt-'+str(i), name='Validation'))
 
-print("Training and Evaluation Done..")
+    print("Training and Evaluation Done..")
 
 ###############################################################################################################
