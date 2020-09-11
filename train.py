@@ -23,13 +23,14 @@ tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.DEBUG)
 #For optimization
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0' # required for tf to use gpu
 # os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=1 /home/raghavan/pinn_test_mimic' # accelerate tf models, stops warning
+tf.config.optimizer.set_jit(True)  # Enable XLA.
 
 ###############################################################################################################
 
 ########Global settings for training###########################################################################
 num_epochs = 500
 split={'train': 8, 'vali': 1, 'test': 1}
-batch_size = {'train': 100, 'vali': 100, 'test': 100}
+batch_size = {'train': 10, 'vali': 10, 'test': 10}
 mpt = 'data/mimic.mpt'
 trr = 'data/mimic.trr'
 ener = 'data/ENERGIES'
@@ -173,6 +174,9 @@ def evalResult(ev):
 
 if __name__ == '__main__':
 
+    import tensorflow as tf2
+    tf2.profiler.experimental.start(model_dir)
+
     print("Loaded tensorflow..\nStarting..")
 
     pre_fn = lambda tensors: pinet(tensors, preprocess=True)
@@ -187,21 +191,23 @@ if __name__ == '__main__':
               'network_params': {},
               'model_params': {'learning_rate': 1e-4, 'decay_step':10, 'decay_rate': 0.70}}
 
-    session_config = tf.ConfigProto()
-    session_config.gpu_options.allow_growth = True
+    # session_config = tf.ConfigProto()
+    # session_config.gpu_options.allow_growth = True
     config = tf.estimator.RunConfig(log_step_count_steps=10, save_summary_steps=10,
-                                    keep_checkpoint_max=None, save_checkpoints_steps=20,
-                                    session_config=session_config)
+                                    keep_checkpoint_max=None, save_checkpoints_steps=20)
+                                    # session_config=session_config)
 
     model = potential_model(params, config=config)
 
-    model.train(input_fn=train, hooks=[TrainHook()], saving_listeners=[CheckPtLogger()])
+    model.train(input_fn=train, hooks=[TrainHook()], saving_listeners=[CheckPtLogger()], max_steps=100)
 
-    print('Validation Error:\n')
-    for i in chkpts:
-        evalResult(model.evaluate(input_fn=valid, hooks=[SessHook('vali')],\
-                                  checkpoint_path=model_dir+'/model.ckpt-'+str(i), name='Validation'))
+    # print('Validation Error:\n')
+    # for i in chkpts:
+    #     evalResult(model.evaluate(input_fn=valid, hooks=[SessHook('vali')],\
+    #                               checkpoint_path=model_dir+'/model.ckpt-'+str(i), name='Validation'))
+    #
+    # print("Training and Evaluation Done..")
 
-    print("Training and Evaluation Done..")
+    tf2.profiler.experimental.stop()
 
 ###############################################################################################################
