@@ -11,7 +11,7 @@ import sys; sys.path.insert(0, '/scratch/ws/1/hpclab11-gpuH_1/PiNN')
 import os, warnings
 warnings.filterwarnings('ignore') # stop future warnings
 
-# import tensorflow as tf
+import tensorflow as tf2
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 
@@ -38,6 +38,8 @@ model_dir = 'model'
 ###############################################################################################################
 
 ########Helper Funcstions/Classes##############################################################################
+from tensorflow.python.training.session_run_hook import SessionRunArgs
+
 from pinn.io import sparse_batch
 from pinn.calculator import PiNN_calc
 from pinn.io.mimic import load_mimic
@@ -168,14 +170,37 @@ def evalResult(ev):
     print('\n')
 
 
+class TensorboardProfilerHook(tf.train.SessionRunHook):
+
+    def __init__(self, start_step, end_step, log_dir):
+        self._start_step = start_step  # At which step to start profiling.
+        self._end_step = end_step  # At which step to start profiling.
+        self._log_dir = log_dir  # Dir where to save profiling info.
+
+    def begin(self):
+        from tensorflow.python.training import training_util
+        self._global_step_tensor = training_util._get_or_create_global_step_read()  # pylint: disable=protected-access
+        if self._global_step_tensor is None:
+            raise RuntimeError("Global step should be created to use StopAtStepHook.")
+
+    def before_run(self, run_context):  # pylint: disable=unused-argument
+        return SessionRunArgs(self._global_step_tensor)
+
+    def after_run(self, run_context, run_values):
+        global_step = run_values.results + 1
+        if global_step == self._start_step:
+            print('STARTING PROFILING')
+            tf2.profiler.experimental.start(model_dir)
+        if global_step == self._end_step:
+            print('STOPPING PROFILING')
+            tf2.profiler.experimental.stop()
+
+
 ###############################################################################################################
 
 ########Training and Evaluation################################################################################
 
 if __name__ == '__main__':
-
-    import tensorflow as tf2
-    tf2.profiler.experimental.start(model_dir)
 
     print("Loaded tensorflow..\nStarting..")
 
@@ -196,10 +221,15 @@ if __name__ == '__main__':
     config = tf.estimator.RunConfig(log_step_count_steps=10, save_summary_steps=10,
                                     keep_checkpoint_max=None, save_checkpoints_steps=20)
                                     # session_config=session_config)
-
     model = potential_model(params, config=config)
 
-    model.train(input_fn=train, hooks=[TrainHook()], saving_listeners=[CheckPtLogger()], max_steps=100)
+    hooks = [
+        TrainHook(),
+        TensorboardProfilerHook(start_step=20, end_step=40, log_dir=model_dir)
+    ]
+
+    # First run a few iterations to launch kernels etc.
+    model.train(input_fn=train, hooks=hooks, saving_listeners=[CheckPtLogger()], max_steps=60)
 
     # print('Validation Error:\n')
     # for i in chkpts:
@@ -207,7 +237,5 @@ if __name__ == '__main__':
     #                               checkpoint_path=model_dir+'/model.ckpt-'+str(i), name='Validation'))
     #
     # print("Training and Evaluation Done..")
-
-    tf2.profiler.experimental.stop()
 
 ###############################################################################################################
