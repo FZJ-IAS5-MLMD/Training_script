@@ -18,10 +18,10 @@ params = {...,
           'parallel': True,
           ...}
 ```
-Most of the changes are in the model functions (`potential_model` and `dipole_model`). If the `parallel` is set, then the model functions call `pinn.utils.parallelize_model`. It does the following (the order is according to the code in `parallelize_model`):
+Most of the changes are in the model functions (`potential_model` and `dipole_model`). If the `parallel` option is set, then the model functions call `pinn.utils.parallelize_model`. It does the following (the order is according to the code in `parallelize_model`):
 
-..1. Make sure that only rank 0 writes the model checkpoint files, so that multiple workers to do corrupt the files.
-..2. Scale the learning rate by the size
-..3. Broadcast initial variable states from rank 0 to all other processes. This is necessary to ensure consistent initialization of all workers when training is started with random weights or restored from a checkpoint. 
-..4. Wrap the tf optimizer around the Horovod `DistributedOptimizer()`. At the end of each iteration, `DistributedOptimizer()` takes care of collecting the gradient from each worker using allreduce, averages those gradients at rank 0, calculates weights and biases, and communicates it back to all other workers.
-..5. Pin GPU to be used to the process local rank by setting `session_config.gpu_options.visible_device_list`
+* Make sure that only rank 0 writes the model checkpoint files, so that multiple workers to do corrupt the files.
+* Scale the learning rate by the number of workers.
+* Broadcast initial variable states from rank 0 to all other processes. This is necessary to ensure consistent initialization of all workers when training is started. with random weights or restored from a checkpoint. 
+* Wrap the tf optimizer around the Horovod `DistributedOptimizer()`. At the end of each iteration, `DistributedOptimizer()` takes care of collecting the gradient from each worker using allreduce, averages those gradients at rank 0, calculates weights and biases, and communicates it back to all other workers.
+* Pin a single GPU to the process local rank by setting `session_config.gpu_options.visible_device_list`.
