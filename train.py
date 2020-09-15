@@ -8,7 +8,10 @@
 # import sys; sys.path.insert(0, '/home/h2/hpclab12/bin/pinn')
 import sys; sys.path.insert(0, '/scratch/ws/1/hpclab11-gpuH_1/mimicpy')
 import sys; sys.path.insert(0, '/scratch/ws/1/hpclab11-gpuH_1/PiNN')
-import os, warnings
+
+import collections.abc
+import os
+import warnings
 warnings.filterwarnings('ignore') # stop future warnings
 
 import tensorflow as tf2
@@ -20,7 +23,7 @@ tf.disable_v2_behavior()
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.DEBUG)
 # however, this will stop all input to tensorboard
 
-#For optimization
+# For optimization
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0' # required for tf to use gpu
 # os.environ['TF_XLA_FLAGS']='--tf_xla_auto_jit=1 /home/raghavan/pinn_test_mimic' # accelerate tf models, stops warning
 tf.config.optimizer.set_jit(True)  # Enable XLA.
@@ -28,7 +31,7 @@ tf.config.optimizer.set_jit(True)  # Enable XLA.
 ###############################################################################################################
 
 ########Global settings for training###########################################################################
-num_epochs = 500
+num_epochs = 2
 split={'train': 8, 'vali': 1, 'test': 1}
 batch_size = {'train': 10, 'vali': 10, 'test': 10}
 mpt = 'data/mimic.mpt'
@@ -44,7 +47,7 @@ from pinn.io import sparse_batch
 from pinn.calculator import PiNN_calc
 from pinn.io.mimic import load_mimic
 from pinn.models import potential_model
-from pinn.networks import pinet
+from pinn.networks import pinet, preprocess_dataset_pinet
 
 from pinn.io.trr import get_trr_frames
 num_samples = get_trr_frames(trr)
@@ -173,6 +176,12 @@ def evalResult(ev):
 class TensorboardProfilerHook(tf.train.SessionRunHook):
 
     def __init__(self, start_step, end_step, log_dir):
+        # Make sure start/end step is a list to avoid code branching.
+        if not isinstance(start_step, collections.abc.Iterable):
+            start_step = [start_step]
+            end_step = [end_step]
+
+        self._current_profiling_session = 0
         self._start_step = start_step  # At which step to start profiling.
         self._end_step = end_step  # At which step to start profiling.
         self._log_dir = log_dir  # Dir where to save profiling info.
@@ -188,12 +197,14 @@ class TensorboardProfilerHook(tf.train.SessionRunHook):
 
     def after_run(self, run_context, run_values):
         global_step = run_values.results + 1
-        if global_step == self._start_step:
-            print('STARTING PROFILING')
-            tf2.profiler.experimental.start(model_dir)
-        if global_step == self._end_step:
-            print('STOPPING PROFILING')
-            tf2.profiler.experimental.stop()
+        if self._current_profiling_session < len(self._start_step):
+            if global_step == self._start_step[self._current_profiling_session]:
+                print('STARTING PROFILING')
+                tf2.profiler.experimental.start(model_dir)
+            if global_step == self._end_step[self._current_profiling_session]:
+                print('STOPPING PROFILING')
+                tf2.profiler.experimental.stop()
+                self._current_profiling_session += 1
 
 
 ###############################################################################################################
@@ -204,12 +215,26 @@ if __name__ == '__main__':
 
     print("Loaded tensorflow..\nStarting..")
 
+    print('STARTING PROFILING')
+    tf2.profiler.experimental.start(model_dir)
+
     pre_fn = lambda tensors: pinet(tensors, preprocess=True)
     dataset = lambda: load_mimic(mpt, trr, ener, split=split)
-    train = lambda: dataset()['train'].cache().repeat().shuffle(1000).\
-            apply(sparse_batch(batch_size['train'])).map(pre_fn, 8)
-    valid = lambda: dataset()['vali'].cache().repeat().apply(sparse_batch(batch_size['vali'])).map(pre_fn, 8)
-    valid = lambda: dataset()['test'].cache().repeat().apply(sparse_batch(batch_size['test'])).map(pre_fn, 8)
+    train = lambda: dataset()['train'].\
+                        map(preprocess_dataset_pinet, tf.data.experimental.AUTOTUNE).\
+                        cache().repeat().shuffle(1000).\
+                        prefetch(batch_size['train']).\
+                        apply(sparse_batch(batch_size['train'], atomic_props=['f_data', 'embed']))
+    valid = lambda: dataset()['vali'].\
+                        map(preprocess_dataset_pinet, tf.data.experimental.AUTOTUNE).\
+                        cache().repeat().\
+                        prefetch(batch_size['vali']).\
+                        apply(sparse_batch(batch_size['vali']))
+    valid = lambda: dataset()['test'].\
+                        map(preprocess_dataset_pinet, tf.data.experimental.AUTOTUNE).\
+                        cache().repeat().\
+                        prefetch(batch_size['test']).\
+                        apply(sparse_batch(batch_size['test']))
 
     params = {'model_dir': model_dir,
               'network': 'pinet',
@@ -225,11 +250,18 @@ if __name__ == '__main__':
 
     hooks = [
         TrainHook(),
-        TensorboardProfilerHook(start_step=20, end_step=40, log_dir=model_dir)
+        # TensorboardProfilerHook(start_step=20, end_step=40, log_dir=model_dir)
+        # TensorboardProfilerHook(start_step=100, end_step=120, log_dir=model_dir)
+        # TensorboardProfilerHook(start_step=[20, 100], end_step=[40, 120], log_dir=model_dir)
     ]
 
     # First run a few iterations to launch kernels etc.
-    model.train(input_fn=train, hooks=hooks, saving_listeners=[CheckPtLogger()], max_steps=60)
+    # model.train(input_fn=train, hooks=hooks, saving_listeners=[CheckPtLogger()], max_steps=60)
+    # model.train(input_fn=train, hooks=hooks, saving_listeners=[CheckPtLogger()], max_steps=140)
+    model.train(input_fn=train, hooks=hooks, saving_listeners=[CheckPtLogger()], max_steps=160)
+
+    print('STOPPING PROFILING')
+    tf2.profiler.experimental.stop()
 
     # print('Validation Error:\n')
     # for i in chkpts:
