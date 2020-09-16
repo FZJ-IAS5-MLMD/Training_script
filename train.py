@@ -211,19 +211,51 @@ class TensorboardProfilerHook(tf.train.SessionRunHook):
 
 ########Training and Evaluation################################################################################
 
+def generate_input_fn(data_label, shuffle_buffer_size=None):
+    if data_label not in split:
+        raise ValueError(f'{data_label} must be in {split.keys()}')
+
+    def input_fn(input_context=None):
+        dataset = load_mimic(mpt, trr, ener, split=split)[data_label]
+
+        # Shard the dataset if a multi-worker startegy is used.
+        if input_context is not None:
+            dataset = dataset.shard(input_context.num_input_pipeline,
+                                    input_context.input_pipeline.id)
+
+        # Cache neighbor list.
+        dataset = dataset.map(preprocess_dataset_pinet, tf.data.experimental.AUTOTUNE).cache()
+
+        # We don't need multiple epoch/shuffling for the validation and test sets.
+        if data_label == 'train':
+            dataset = dataset.repeat()
+        if shuffle_buffer_size is not None:
+            dataset = dataset.shuffle(shuffle_buffer_size)
+
+        dataset = dataset.prefetch(batch_size[data_label])
+        dataset = dataset.apply(sparse_batch(batch_size[data_label],
+                                             atomic_props=['f_data', 'embed']))
+        return dataset
+
+    return input_fn
+
+
 if __name__ == '__main__':
 
     # ------------- #
     # Configure run #
     # ------------- #
+
     # This is the total number of mini-batches to run. We divide it by the number of GPUs below.
     max_n_steps = 160
 
-    # mirrored_strategy = tf.distribute.MirroredStrategy()
-    mirrored_strategy = None  # Do not distribute.
+    strategy = None  # Do not distribute.
+    # strategy = tf.distribute.MirroredStrategy()
+    # strategy = tf.distribute.MultiWorkerMirroredStrategy(
+    #     cluster_resolver=tf.distribute.cluster_resolver.SlurmClusterResolver)
 
     # The total number of mini-batches must be divided among GPUs with the mirrored strategy.
-    if mirrored_strategy is not None:
+    if strategy is not None:
         n_gpus = len(tf.config.list_physical_devices('GPU'))
         max_n_steps /= n_gpus
 
@@ -234,29 +266,15 @@ if __name__ == '__main__':
         # TensorboardProfilerHook(start_step=[20, 100], end_step=[40, 120], log_dir=model_dir)
     ]
 
-    # If you de-comment this, remember to de-comment also the stop at the bottom.
+    # If you de-comment this, remember to de-comment also the stop() at the bottom.
     # print('STARTING PROFILING')
     # tf2.profiler.experimental.start(model_dir)
 
     print("Loaded tensorflow..\nStarting..")
 
-    pre_fn = lambda tensors: pinet(tensors, preprocess=True)
-    dataset = lambda: load_mimic(mpt, trr, ener, split=split)
-    train = lambda: dataset()['train'].\
-                        map(preprocess_dataset_pinet, tf.data.experimental.AUTOTUNE).\
-                        cache().repeat().shuffle(1000).\
-                        prefetch(batch_size['train']).\
-                        apply(sparse_batch(batch_size['train'], atomic_props=['f_data', 'embed']))
-    valid = lambda: dataset()['vali'].\
-                        map(preprocess_dataset_pinet, tf.data.experimental.AUTOTUNE).\
-                        cache().repeat().\
-                        prefetch(batch_size['vali']).\
-                        apply(sparse_batch(batch_size['vali']))
-    valid = lambda: dataset()['test'].\
-                        map(preprocess_dataset_pinet, tf.data.experimental.AUTOTUNE).\
-                        cache().repeat().\
-                        prefetch(batch_size['test']).\
-                        apply(sparse_batch(batch_size['test']))
+    train_input_fn = generate_input_fn('train', shuffle_buffer_size=1000)
+    valid_input_fn = generate_input_fn('vali')
+    test_input_fn = generate_input_fn('test')
 
     params = {'model_dir': model_dir,
               'network': 'pinet',
@@ -265,18 +283,18 @@ if __name__ == '__main__':
 
     config = tf.estimator.RunConfig(log_step_count_steps=10, save_summary_steps=10,
                                     keep_checkpoint_max=None, save_checkpoints_steps=max_n_steps,
-                                    train_distribute=mirrored_strategy)
+                                    train_distribute=strategy)
     model = potential_model(params, config=config)
 
     # First run a few iterations to launch kernels etc.
-    model.train(input_fn=train, hooks=hooks, saving_listeners=[CheckPtLogger()], max_steps=max_n_steps)
+    model.train(input_fn=train_input_fn, hooks=hooks, saving_listeners=[CheckPtLogger()], max_steps=max_n_steps)
 
     # print('STOPPING PROFILING')
     # tf2.profiler.experimental.stop()
 
     # print('Validation Error:\n')
     # for i in chkpts:
-    #     evalResult(model.evaluate(input_fn=valid, hooks=[SessHook('vali')],\
+    #     evalResult(model.evaluate(input_fn=valid_input_fn, hooks=[SessHook('vali')],\
     #                               checkpoint_path=model_dir+'/model.ckpt-'+str(i), name='Validation'))
     #
     # print("Training and Evaluation Done..")
