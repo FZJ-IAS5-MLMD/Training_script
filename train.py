@@ -220,8 +220,9 @@ def generate_input_fn(data_label, shuffle_buffer_size=None):
 
         # Shard the dataset if a multi-worker startegy is used.
         if input_context is not None:
-            dataset = dataset.shard(input_context.num_input_pipeline,
-                                    input_context.input_pipeline.id)
+            print('Sharding dataset', input_context.num_input_pipelines, '/', input_context.input_pipeline_id)
+            dataset = dataset.shard(input_context.num_input_pipelines,
+                                    input_context.input_pipeline_id)
 
         # Cache neighbor list.
         dataset = dataset.map(preprocess_dataset_pinet, tf.data.experimental.AUTOTUNE).cache()
@@ -251,8 +252,8 @@ if __name__ == '__main__':
 
     strategy = None  # Do not distribute.
     # strategy = tf.distribute.MirroredStrategy()
-    # strategy = tf.distribute.MultiWorkerMirroredStrategy(
-    #     cluster_resolver=tf.distribute.cluster_resolver.SlurmClusterResolver)
+    # strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy(
+    #     cluster_resolver=tf.distribute.cluster_resolver.SlurmClusterResolver())
 
     # The total number of mini-batches must be divided among GPUs with the mirrored strategy.
     if strategy is not None:
