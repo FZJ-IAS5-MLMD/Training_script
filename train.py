@@ -213,10 +213,32 @@ class TensorboardProfilerHook(tf.train.SessionRunHook):
 
 if __name__ == '__main__':
 
-    print("Loaded tensorflow..\nStarting..")
+    # ------------- #
+    # Configure run #
+    # ------------- #
+    # This is the total number of mini-batches to run. We divide it by the number of GPUs below.
+    max_n_steps = 160
 
-    print('STARTING PROFILING')
-    tf2.profiler.experimental.start(model_dir)
+    # mirrored_strategy = tf.distribute.MirroredStrategy()
+    mirrored_strategy = None  # Do not distribute.
+
+    # The total number of mini-batches must be divided among GPUs with the mirrored strategy.
+    if mirrored_strategy is not None:
+        n_gpus = len(tf.config.list_physical_devices('GPU'))
+        max_n_steps /= n_gpus
+
+    hooks = [
+        TrainHook(),
+        # TensorboardProfilerHook(start_step=20, end_step=40, log_dir=model_dir)
+        # TensorboardProfilerHook(start_step=100, end_step=120, log_dir=model_dir)
+        # TensorboardProfilerHook(start_step=[20, 100], end_step=[40, 120], log_dir=model_dir)
+    ]
+
+    # If you de-comment this, remember to de-comment also the stop at the bottom.
+    # print('STARTING PROFILING')
+    # tf2.profiler.experimental.start(model_dir)
+
+    print("Loaded tensorflow..\nStarting..")
 
     pre_fn = lambda tensors: pinet(tensors, preprocess=True)
     dataset = lambda: load_mimic(mpt, trr, ener, split=split)
@@ -241,27 +263,16 @@ if __name__ == '__main__':
               'network_params': {},
               'model_params': {'learning_rate': 1e-4, 'decay_step':10, 'decay_rate': 0.70}}
 
-    # session_config = tf.ConfigProto()
-    # session_config.gpu_options.allow_growth = True
     config = tf.estimator.RunConfig(log_step_count_steps=10, save_summary_steps=10,
-                                    keep_checkpoint_max=None, save_checkpoints_steps=20)
-                                    # session_config=session_config)
+                                    keep_checkpoint_max=None, save_checkpoints_steps=max_n_steps,
+                                    train_distribute=mirrored_strategy)
     model = potential_model(params, config=config)
 
-    hooks = [
-        TrainHook(),
-        # TensorboardProfilerHook(start_step=20, end_step=40, log_dir=model_dir)
-        # TensorboardProfilerHook(start_step=100, end_step=120, log_dir=model_dir)
-        # TensorboardProfilerHook(start_step=[20, 100], end_step=[40, 120], log_dir=model_dir)
-    ]
-
     # First run a few iterations to launch kernels etc.
-    # model.train(input_fn=train, hooks=hooks, saving_listeners=[CheckPtLogger()], max_steps=60)
-    # model.train(input_fn=train, hooks=hooks, saving_listeners=[CheckPtLogger()], max_steps=140)
-    model.train(input_fn=train, hooks=hooks, saving_listeners=[CheckPtLogger()], max_steps=160)
+    model.train(input_fn=train, hooks=hooks, saving_listeners=[CheckPtLogger()], max_steps=max_n_steps)
 
-    print('STOPPING PROFILING')
-    tf2.profiler.experimental.stop()
+    # print('STOPPING PROFILING')
+    # tf2.profiler.experimental.stop()
 
     # print('Validation Error:\n')
     # for i in chkpts:
